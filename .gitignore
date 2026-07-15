@@ -8,3 +8,8 @@ venv/
 .DS_Store
 .pytest_cache/
 .ruff_cache/
+
+# Local experiment outputs from run_single_video_groq.py / run_single_video_ollama.py
+server.log
+summary_*.json
+summary_*.html
