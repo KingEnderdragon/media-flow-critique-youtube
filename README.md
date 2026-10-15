@@ -461,6 +461,8 @@ them immediately, exactly as before this existed.
 
 ## Transcript summarization (optional)
 
+> Two summary builders exist - see [Which summary builder to use](#which-summary-builder-to-use).
+
 > **Current execution model:** `summarize_backlog.py` is a separate Railway
 > Cron Job (`railway.summarize-backlog.toml`), not a stage of
 > `discover_and_process.py`. It reads successful transcripts and writes only
@@ -846,6 +848,65 @@ with the lock renewed before each attempt) is the sole retry authority
 instead - the same fix already applied to the Webshare proxy's internal
 retries in `app/youtube.py`.
 
+## Which summary builder to use
+
+This repo has **two separate summary builders**. They are not versions of
+each other - pick by what you want out:
+
+| | **Short summary builder** | **Complex summary builder (dossier)** |
+|---|---|---|
+| Script | `run_single_video_ollama.py` (local) / `summarize_backlog.py` (Railway, Claude) | `run_video_dossier_ollama.py` (local only) |
+| Output | `summary_<id>_<model>.json` - a 1-3 sentence summary, a `video_type`, and up to 20 timestamped major/minor points | `dossier_<id>_<model>.json` **+** `dossier_<id>_<model>.html` - an archive page modelled on [zizek.org/talk/*](https://zizek.org/talk/a-plea-for-bureaucratic-socialism) |
+| Contents | summary + points | prose summary, tags, located-moment timeline, ideas, stories, works, people, what it argues, moves, claims, verbatim quotes, related videos, paragraphed transcript |
+| Model calls | 1 per chunk (+1 synthesis if chunked) | 2 per chunk (moments, references) + 1 synthesis |
+| Time (15-min video, mistral-small, 12GB GPU) | ~3-5 min | ~7-8 min |
+| Use for | the feed / dashboard / quick triage | a deep, browsable write-up of one video |
+
+Use the **short builder** for anything feeding the discovery feed, Drive
+`summaries/`, or the Streamlit dashboard - that's the format those read.
+Use the **complex builder** when you want a full dossier page for a
+specific video. The dossier output is not read by the dashboard.
+
+### Running the complex summary builder
+
+> **Status (2026-10-15): only tested on one short video.** The single
+> verified run is *How To Play: Alien RPG* (`EgcrLw1IoSQ`, 15:31), which fit
+> in **one chunk** - so the long-video path (multi-chunk extraction → merge/
+> dedupe → cross-chunk synthesis), checkpoint resume across chunks, and the
+> memory behaviour on a long run have **not been exercised yet**. Neither
+> have the newer fixes (timestamp cleaning, `repeat_penalty`, render-time
+> sentence de-duplication) on a fresh multi-chunk extraction. Run a 40+
+> minute video before relying on it for long-form content.
+
+```
+python run_video_dossier_ollama.py <video_url_or_id> [model]   # default model: mistral-small
+python run_video_dossier_ollama.py --render <dossier_json>      # re-render HTML only, no model calls
+```
+
+- **Long videos** are handled the same way as the short builder: the
+  transcript is split into chunks (`MAX_CHUNK_CHARS = 20000`, smaller than
+  the short builder's 30000 because each chunk gets two extraction passes),
+  each chunk is extracted separately, results are merged/deduped, and a final
+  synthesis call writes one summary across all chunks.
+- **Resumable:** every model call's raw output is cached in
+  `dossier_<id>_<model>.calls.json`. A run that gets killed resumes from the
+  last finished call; re-running a finished video re-applies grounding and
+  rendering with no new model calls. Delete the file (or one key in it) to
+  force fresh extraction.
+- **Grounding:** a timestamp is only shown if its cited transcript line
+  passes the same anchor gate as the short builder (`_resolve_points()`),
+  falling back to where the cited verbatim words actually appear. Quotes,
+  moves and story pull-quotes must be found word-for-word in the transcript
+  or they're dropped.
+- **Memory:** mistral-small (~17GB) only part-fits a 12GB card and spills
+  ~7GB into system RAM. Run it in a foreground terminal - Claude Code kills
+  *background* shells under memory pressure. Chunking bounds context size,
+  not model size.
+- **"Related"** compares against every other `dossier_*.json` in the same
+  folder (shared tags/ideas/people/works).
+- Outputs (`dossier_*.json`, `dossier_*.html`) are gitignored, like
+  `summary_*`.
+
 ## Insight dashboard (optional)
 
 `vidproc_app.py` is a read-only Streamlit dashboard over the summary
@@ -1060,4 +1121,7 @@ summarize_backlog.py     standalone entrypoint: concurrent independent summary w
 backfill_channel_ids.py  one-off script: recover channel_id for pre-existing summaries
 backfill_new_channels.py  one-off/rerunnable script: backfill a newly-added channel's current RSS feed, decoupled from discover_and_process.py's lock
 get_refresh_token.py  one-time local script to mint the Drive OAuth refresh token
+run_single_video_ollama.py  SHORT summary builder, local: one video -> summary + timestamped points (Ollama, default mistral-small)
+run_single_video_groq.py    SHORT summary builder via Groq (chunked + rate-paced)
+run_video_dossier_ollama.py COMPLEX summary builder, local: one video -> archive-style dossier JSON + HTML page
 ```

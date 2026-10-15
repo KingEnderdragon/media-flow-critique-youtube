@@ -13,3 +13,7 @@ venv/
 server.log
 summary_*.json
 summary_*.html
+
+# run_video_dossier_ollama.py outputs
+dossier_*.json
+dossier_*.html
